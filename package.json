@@ -1,0 +1,21 @@
+{
+  "name": "com.zlotny.vertexpaint",
+  "version": "1.0.0",
+  "displayName": "Vertex Paint Tool",
+  "description": "In-scene vertex colour painting for MeshRenderer and SkinnedMeshRenderer. Supports multiple brush falloffs, fill, erase, undo/redo, and a draggable scene view overlay.",
+  "unity": "6000.0",
+  "author": {
+    "name": "Andrés Vieira",
+    "url": "https://github.com/zlotny"
+  },
+  "license": "MIT",
+  "keywords": [
+    "vertex",
+    "paint",
+    "color",
+    "mesh",
+    "editor",
+    "tool"
+  ],
+  "type": "tool"
+}
