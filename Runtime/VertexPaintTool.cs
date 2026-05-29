@@ -37,8 +37,9 @@ public class VertexPaintTool : MonoBehaviour
     private MeshFilter _meshFilter;
     private Mesh _patchedMesh;
 
-    // Cached materials for preview restore (supports multi-material renderers)
-    private Material[] _previewRestoreMaterials;
+    // Cached materials for preview restore (supports multi-material renderers).
+    // SerializeField so it survives domain reloads when preview is active.
+    [SerializeField] private Material[] _previewRestoreMaterials;
 
     // Debug material (never serialized)
     [System.NonSerialized] public Material debugMaterial;
@@ -91,10 +92,6 @@ public class VertexPaintTool : MonoBehaviour
             else if (_skinnedRenderer != null)
                 originalMesh = _skinnedRenderer.sharedMesh;
         }
-
-#if UNITY_EDITOR
-        UnityEditor.Undo.undoRedoPerformed += OnUndoRedo;
-#endif
     }
 
     private void OnEnable()
@@ -138,9 +135,13 @@ public class VertexPaintTool : MonoBehaviour
         var freshMesh = Instantiate(originalMesh);
         freshMesh.name = originalMesh.name + " (Patched)";
 
-        // Apply current paintData colors
-        var colors = new Color[freshMesh.vertexCount];
-        for (int i = 0; i < colors.Length; i++) colors[i] = Color.white;
+        // Use the original mesh's colors as baseline, then layer paint overrides on top.
+        var colors = freshMesh.colors;
+        if (colors == null || colors.Length != freshMesh.vertexCount)
+        {
+            colors = new Color[freshMesh.vertexCount];
+            for (int i = 0; i < colors.Length; i++) colors[i] = Color.white;
+        }
         if (paintData != null)
         {
             foreach (var kvp in paintData.GetAllOverrides())
@@ -309,9 +310,16 @@ public class VertexPaintTool : MonoBehaviour
         if (mesh == null) return;
 
         int vertCount = mesh.vertexCount;
-        Color[] colors = new Color[vertCount];
-        for (int i = 0; i < vertCount; i++)
-            colors[i] = Color.white;
+
+        // Use the mesh's existing vertex colors as the baseline (preserves colors baked in
+        // Blender or other DCC tools). Fall back to white only when there are no colors at all.
+        Color[] colors = mesh.colors;
+        if (colors == null || colors.Length != vertCount)
+        {
+            colors = new Color[vertCount];
+            for (int i = 0; i < vertCount; i++)
+                colors[i] = Color.white;
+        }
 
         if (paintData != null)
         {
@@ -344,9 +352,14 @@ public class VertexPaintTool : MonoBehaviour
             UnityEditor.Undo.RegisterCompleteObjectUndo(paintData, "Fill Mesh");
 #endif
             paintData.Clear();
-            if (paintColor != Color.white)
+
+            Color[] originalColors = originalMesh != null ? originalMesh.colors : null;
+            bool hasOriginal = originalColors != null && originalColors.Length == vertCount;
+
+            for (int i = 0; i < vertCount; i++)
             {
-                for (int i = 0; i < vertCount; i++)
+                Color baseline = hasOriginal ? originalColors[i] : Color.white;
+                if (paintColor != baseline)
                     paintData.SetVertexColor(i, paintColor);
             }
 #if UNITY_EDITOR
@@ -356,14 +369,68 @@ public class VertexPaintTool : MonoBehaviour
     }
 
     /// <summary>
-    /// Erase at a world-space position by blending toward white at the current brush settings.
+    /// Erase at a world-space position by blending each vertex back toward its original mesh color.
     /// </summary>
     public void EraseAt(Vector3 worldPosition)
     {
-        Color saved = paintColor;
-        paintColor = Color.white;
-        PaintAt(worldPosition);
-        paintColor = saved;
+        if (_patchedMesh == null) return;
+
+        Color[] originalColors = originalMesh != null ? originalMesh.colors : null;
+        bool hasOriginal = originalColors != null && originalColors.Length == _patchedMesh.vertexCount;
+
+        Color[] colors = _patchedMesh.colors;
+        if (colors == null || colors.Length != _patchedMesh.vertexCount)
+        {
+            colors = new Color[_patchedMesh.vertexCount];
+            for (int i = 0; i < colors.Length; i++)
+                colors[i] = hasOriginal ? originalColors[i] : Color.white;
+        }
+
+        Vector3 localPos = transform.InverseTransformPoint(worldPosition);
+        Vector3[] verts = _patchedMesh.vertices;
+        float brushRadius = brushSize * 0.5f;
+        var changed = new List<int>();
+
+        for (int i = 0; i < verts.Length; i++)
+        {
+            float dist = Vector3.Distance(verts[i], localPos);
+            if (dist > brushRadius) continue;
+
+            float t = Mathf.Clamp01(dist / brushRadius);
+            float influence;
+            if      (brushType == BrushType.Hard)     influence = t < 1f ? 1f : 0f;
+            else if (brushType == BrushType.Linear)   influence = 1f - t;
+            else if (brushType == BrushType.Soft)     influence = (1f - t) * (1f - t);
+            else /* Gaussian */                       influence = Mathf.Exp(-4f * t * t);
+
+            if (influence <= 0f) continue;
+
+            Color target = hasOriginal ? originalColors[i] : Color.white;
+            colors[i] = Color.Lerp(colors[i], target, brushOpacity * influence);
+            changed.Add(i);
+        }
+
+        if (changed.Count == 0) return;
+
+        _patchedMesh.colors = colors;
+
+        if (paintData != null)
+        {
+#if UNITY_EDITOR
+            UnityEditor.Undo.RegisterCompleteObjectUndo(paintData, "Erase Stroke");
+#endif
+            foreach (int idx in changed)
+            {
+                Color target = hasOriginal ? originalColors[idx] : Color.white;
+                if (colors[idx] == target)
+                    paintData.RemoveVertexColor(idx);
+                else
+                    paintData.SetVertexColor(idx, colors[idx]);
+            }
+#if UNITY_EDITOR
+            UnityEditor.EditorUtility.SetDirty(paintData);
+#endif
+        }
     }
 
     /// <summary>
@@ -413,9 +480,13 @@ public class VertexPaintTool : MonoBehaviour
 #if UNITY_EDITOR
             UnityEditor.Undo.RegisterCompleteObjectUndo(paintData, "Paint Stroke");
 #endif
+            Color[] originalColors = originalMesh != null ? originalMesh.colors : null;
+            bool hasOriginal = originalColors != null && originalColors.Length == _patchedMesh.vertexCount;
+
             foreach (int idx in changed)
             {
-                if (colors[idx] == Color.white)
+                Color baseline = hasOriginal ? originalColors[idx] : Color.white;
+                if (colors[idx] == baseline)
                     paintData.RemoveVertexColor(idx);
                 else
                     paintData.SetVertexColor(idx, colors[idx]);
@@ -438,23 +509,24 @@ public class VertexPaintTool : MonoBehaviour
 
         if (showVertexColors)
         {
-            // Save originals only if we haven't saved them yet
-            // Check by seeing if first material is NOT the debug material
             Material debug = GetDebugMaterial();
-            if (_previewRestoreMaterials == null && r.sharedMaterial != debug)
+            if (debug == null) return;
+
+            // Save originals only once. _previewRestoreMaterials is [SerializeField] so it
+            // survives domain reloads — if it's already populated, we already saved them.
+            if (_previewRestoreMaterials == null)
                 _previewRestoreMaterials = r.sharedMaterials;
 
-            // Replace all materials with the debug material
-            var mats = new Material[_previewRestoreMaterials != null ? _previewRestoreMaterials.Length : 1];
+            var mats = new Material[_previewRestoreMaterials.Length];
             for (int i = 0; i < mats.Length; i++)
                 mats[i] = debug;
 
-            r.materials = mats;
+            r.sharedMaterials = mats;
         }
         else
         {
             if (_previewRestoreMaterials != null && _previewRestoreMaterials.Length > 0)
-                r.materials = _previewRestoreMaterials;
+                r.sharedMaterials = _previewRestoreMaterials;
 
             _previewRestoreMaterials = null;
         }

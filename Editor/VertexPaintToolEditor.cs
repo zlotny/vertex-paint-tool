@@ -134,6 +134,7 @@ public class VertexPaintToolEditor : EditorTool
                 {
                     if (vpt.paintData != null) UnityEditor.Undo.RegisterCompleteObjectUndo(vpt.paintData, "Clear All Paint");
                     vpt.paintData?.Clear();
+                    if (vpt.paintData != null) UnityEditor.EditorUtility.SetDirty(vpt.paintData);
                     vpt.RebuildPatchedMesh();
                     e.Use();
                 }
@@ -380,6 +381,7 @@ public class VertexPaintToolEditor : EditorTool
         {
             if (vpt.paintData != null) Undo.RegisterCompleteObjectUndo(vpt.paintData, "Clear All Paint");
             vpt.paintData?.Clear();
+            if (vpt.paintData != null) EditorUtility.SetDirty(vpt.paintData);
             vpt.RebuildPatchedMesh();
             SceneView.RepaintAll();
         }
