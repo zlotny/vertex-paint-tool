@@ -386,14 +386,13 @@ public class VertexPaintTool : MonoBehaviour
                 colors[i] = hasOriginal ? originalColors[i] : Color.white;
         }
 
-        Vector3 localPos = transform.InverseTransformPoint(worldPosition);
         Vector3[] verts = _patchedMesh.vertices;
         float brushRadius = brushSize * 0.5f;
         var changed = new List<int>();
 
         for (int i = 0; i < verts.Length; i++)
         {
-            float dist = Vector3.Distance(verts[i], localPos);
+            float dist = Vector3.Distance(transform.TransformPoint(verts[i]), worldPosition);
             if (dist > brushRadius) continue;
 
             float t = Mathf.Clamp01(dist / brushRadius);
@@ -448,14 +447,13 @@ public class VertexPaintTool : MonoBehaviour
                 colors[i] = Color.white;
         }
 
-        Vector3 localPos = transform.InverseTransformPoint(worldPosition);
         Vector3[] verts = _patchedMesh.vertices;
         float brushRadius = brushSize * 0.5f;
         var changed = new List<int>();
 
         for (int i = 0; i < verts.Length; i++)
         {
-            float dist = Vector3.Distance(verts[i], localPos);
+            float dist = Vector3.Distance(transform.TransformPoint(verts[i]), worldPosition);
             if (dist > brushRadius) continue;
 
             float t = Mathf.Clamp01(dist / brushRadius);
